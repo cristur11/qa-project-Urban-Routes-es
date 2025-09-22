@@ -1,80 +1,112 @@
 import data
 from selenium import webdriver
-from selenium.webdriver import Keys
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions
-from selenium.webdriver.support.wait import WebDriverWait
-
-
-# no modificar
-def retrieve_phone_code(driver) -> str:
-    """Este código devuelve un número de confirmación de teléfono y lo devuelve como un string.
-    Utilízalo cuando la aplicación espere el código de confirmación para pasarlo a tus pruebas.
-    El código de confirmación del teléfono solo se puede obtener después de haberlo solicitado en la aplicación."""
-
-    import json
-    import time
-    from selenium.common import WebDriverException
-    code = None
-    for i in range(10):
-        try:
-            logs = [log["message"] for log in driver.get_log('performance') if log.get("message")
-                    and 'api/v1/number?number' in log.get("message")]
-            for log in reversed(logs):
-                message_data = json.loads(log)["message"]
-                body = driver.execute_cdp_cmd('Network.getResponseBody',
-                                              {'requestId': message_data["params"]["requestId"]})
-                code = ''.join([x for x in body['body'] if x.isdigit()])
-        except WebDriverException:
-            time.sleep(1)
-            continue
-        if not code:
-            raise Exception("No se encontró el código de confirmación del teléfono.\n"
-                            "Utiliza 'retrieve_phone_code' solo después de haber solicitado el código en tu aplicación.")
-        return code
-
-
-class UrbanRoutesPage:
-    from_field = (By.ID, 'from')
-    to_field = (By.ID, 'to')
-
-    def __init__(self, driver):
-        self.driver = driver
-
-    def set_from(self, from_address):
-        self.driver.find_element(*self.from_field).send_keys(from_address)
-
-    def set_to(self, to_address):
-        self.driver.find_element(*self.to_field).send_keys(to_address)
-
-    def get_from(self):
-        return self.driver.find_element(*self.from_field).get_property('value')
-
-    def get_to(self):
-        return self.driver.find_element(*self.to_field).get_property('value')
+from helpers import retrieve_phone_code
+from pages import UrbanRoutesPage
+from selenium.webdriver.chrome.options import Options
 
 
 
 class TestUrbanRoutes:
 
     driver = None
+    page = None
 
     @classmethod
     def setup_class(cls):
         # no lo modifiques, ya que necesitamos un registro adicional habilitado para recuperar el código de confirmación del teléfono
-        from selenium.webdriver import DesiredCapabilities
-        capabilities = DesiredCapabilities.CHROME
-        capabilities["goog:loggingPrefs"] = {'performance': 'ALL'}
-        cls.driver = webdriver.Chrome(desired_capabilities=capabilities)
+        options = Options()
+        options.set_capability("goog:loggingPrefs", {'performance': 'ALL'})
+        # Se pasa el objeto `options` al constructor de Chrome
+        cls.driver = webdriver.Chrome(options=options)
+        cls.driver.get(data.urban_routes_url)
+        cls.page = UrbanRoutesPage(cls.driver)
 
-    def test_set_route(self):
+    def setup_method(self):
         self.driver.get(data.urban_routes_url)
+
+    def test_1_set_address(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        assert self.page.get_from() == data.address_from
+        assert self.page.get_to() == data.address_to
+
+    def test_2_select_comfort_tariff(self):
         routes_page = UrbanRoutesPage(self.driver)
-        address_from = data.address_from
-        address_to = data.address_to
-        routes_page.set_route(address_from, address_to)
-        assert routes_page.get_from() == address_from
-        assert routes_page.get_to() == address_to
+        routes_page.click_comfort_button()
+        assert 'Comfort' == routes_page.get_comfort_tariff()
+
+    def test_3_phone_number(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        self.page.click_comfort_button()
+        self.page.set_phone_number(data.phone_number)
+        self.page.click_next_button()
+        phone_code = retrieve_phone_code(self.driver)
+        self.page.set_phone_code(phone_code)
+        self.page.click_confirm_button()
+        assert not self.page.driver.find_elements(*self.page.phone_code_field)
+
+    def test_4_card_number(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        self.page.click_comfort_button()
+        self.page.set_phone_number(data.phone_number)
+        self.page.click_next_button()
+        phone_code = retrieve_phone_code(self.driver)
+        self.page.set_phone_code(phone_code)
+        self.page.click_confirm_button()
+        self.page.add_credit_card(data.card_number, data.card_code)
+        assert not self.page.driver.find_elements(*self.page.add_card_button)
+
+    def test_5_message_for_driver(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        self.page.click_comfort_button()
+        self.page.set_message_for_driver(data.message_for_driver)
+        assert self.page.driver.find_element(*self.page.message_for_driver_field).get_attribute(
+            'value') == data.message_for_driver
+
+    def test_6_blanket_and_tissues_option(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        self.page.click_comfort_button()
+        self.page.click_blanket_and_tissues_toggle()
+        assert "checked" in self.page.driver.find_element(*self.page.blanket_and_tissues_toggle).get_attribute("class")
+
+    def test_7_add_two_ice_cream(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        self.page.click_comfort_button()
+        self.page.add_two_ice_cream()
+        assert self.page.driver.find_element(*self.page.ice_cream_plus_button).is_displayed()
+
+    def test_8_complete_taxi_order_process(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        self.page.click_comfort_button()
+        self.page.set_phone_number(data.phone_number)
+        self.page.click_next_button()
+        phone_code = retrieve_phone_code(self.driver)
+        self.page.set_phone_code(phone_code)
+        self.page.click_confirm_button()
+        self.page.add_credit_card(data.card_number, data.card_code)
+        self.page.click_order_button()
+        self.page.wait_for_search_for_driver_modal()
+        assert self.page.driver.find_element(*self.page.search_for_driver_modal).is_displayed()
+
+    def test_9_driver_info_modal(self):
+        self.page.set_from(data.address_from)
+        self.page.set_to(data.address_to)
+        self.page.click_comfort_button()
+        self.page.set_phone_number(data.phone_number)
+        self.page.click_next_button()
+        phone_code = retrieve_phone_code(self.driver)
+        self.page.set_phone_code(phone_code)
+        self.page.click_confirm_button()
+        self.page.add_credit_card(data.card_number, data.card_code)
+        self.page.click_order_button()
+        driver_modal_element = self.page.wait_for_driver_info_modal()
+        assert driver_modal_element.is_displayed()
 
 
     @classmethod
